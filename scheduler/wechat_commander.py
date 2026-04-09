@@ -6,7 +6,7 @@
   备用模式：Scheduler 每2分钟调用一次，双保险
 
 当前监听目标（测试阶段）:
-  WATCH_CONTACTS = [{"wxid": "...", "name": "向日葵"}]
+  WATCH_CONTACTS = [{"wxid": "wxid_xxx", "name": "联系人备注名"}]
   后续扩展为 all_contacts 模式
 
 用法（联系人在微信发）:
@@ -35,10 +35,8 @@ from memory import db as main_db
 COMMAND_PREFIXES = ("aegis:", "jv:", "jarvis:")
 
 # 当前监听的联系人列表（wxid + 备注名）
-# 测试阶段只监听向日葵，后续可扩展
-WATCH_CONTACTS: list[dict] = [
-    {"wxid": "wxid_xr6veadv5z2v21", "name": "向日葵"},
-]
+# 在 Web UI 设置页 → 微信 → 监控联系人 中填写，或直接在 data/settings.json 编辑
+WATCH_CONTACTS: list[dict] = []
 
 # 用于主动发消息时的 pyautogui 方案（Ctrl+F 搜索联系人）
 LISTEN_CONTACT = config.get("AEGIS_DISPLAY_NAME", "") or "文件传输助手"

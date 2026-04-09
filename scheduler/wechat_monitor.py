@@ -23,12 +23,8 @@ from scheduler.wechat_commander import _read_contact_messages, _load_processed, 
 _SETTINGS_FILE = config.DATA_DIR / "settings.json"
 
 # 默认监控联系人（若 settings.json 未配置则用此列表）
-_DEFAULT_CONTACTS = [
-    {"wxid": "wxid_xr6veadv5z2v21", "name": "向日葵",    "relation": "妈妈"},
-    {"wxid": "wxid_s5bcz48lnbhv21", "name": "东北汉",    "relation": "爸爸"},
-    {"wxid": "wxid_98rkw8elx4cs21", "name": "吴陶",      "relation": "商业伙伴，纷蓝语音淘"},
-    {"wxid": "wxid_s76whxbfmrih12", "name": "ccmukevin", "relation": "朋友，友谊医院神外科王凯文"},
-]
+# 在 Web UI 设置页 → 微信 → 监控联系人 中填写
+_DEFAULT_CONTACTS: list[dict] = []
 
 
 def _get_config() -> tuple[list[dict], int]:
