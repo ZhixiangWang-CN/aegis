@@ -262,6 +262,7 @@ git -C data/memory revert <hash>
 
 ## Roadmap
 
+- [ ] **WhatsApp integration** — local DB decryption for Windows Desktop, same local-first approach as WeChat; no cloud relay, no ToS-violating automation. Contributor help welcome.
 - [ ] **Ollama / local LLM** — fully offline mode, zero API calls
 - [ ] **macOS / Linux** — WeChat decryption is Windows-only, but everything else works cross-platform today; Docker + systemd packaging
 - [ ] **Cross-encoder re-ranking** — add a re-ranker stage after BM25 + dense retrieval

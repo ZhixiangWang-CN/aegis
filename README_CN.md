@@ -262,6 +262,7 @@ git -C data/memory revert <hash>
 
 ## 路线图
 
+- [ ] **WhatsApp 接入** — 读取 Windows Desktop 本地数据库，与微信解密同样的本地优先方案，不走云端中转，不触碰服务条款红线。欢迎有能力的开发者参与贡献。
 - [ ] **本地 LLM（Ollama）** — 完全离线模式，零 API 调用
 - [ ] **macOS / Linux 打包** — 微信解密是 Windows 专属，但其余模块今天就能跨平台；Docker + systemd 无头部署
 - [ ] **Cross-encoder 重排序** — BM25 + 向量检索后增加精排阶段
