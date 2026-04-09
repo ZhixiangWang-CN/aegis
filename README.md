@@ -3,6 +3,7 @@
   / _ | / __/ / _ \/ _// __/
  / __ |/ _/  / __, / _/_\ \
 /_/ |_/___/ /_/ |_/___/___/
+        your digital twin
 ```
 
 # Aegis — Your Personal Digital Twin
@@ -13,24 +14,32 @@
 [![Zero Cloud](https://img.shields.io/badge/Cloud%20Dependency-Zero-critical)](#)
 [![中文文档](https://img.shields.io/badge/文档-中文版-red)](README_CN.md)
 
-> **You have thousands of conversations, hundreds of relationships, dozens of ongoing projects — scattered across WeChat, email, files, and your own head.**
->
-> Aegis reads all of it. Remembers all of it. Becomes a persistent, private model of *you* — running entirely on your own machine, never touching a cloud.
+---
+
+*Every conversation you've had. Every decision you've made. Every person who matters to you.*
+*Scattered across WeChat, email, files — and slowly fading from memory.*
+
+**Aegis pulls it all together.** It reads your messages, learns your people, tracks your projects, and builds a persistent model of *you* — running entirely on your own machine, owned entirely by you, never touching a cloud.
+
+Not a chatbot. Not a search engine. A digital twin.
 
 ---
 
-## The Idea: A Twin, Not a Chatbot
+## The Problem With Every AI Tool You've Tried
 
-Most AI tools are stateless. Every conversation starts from zero. They don't know your people, your history, or what actually matters to you.
+They're stateless. Every session starts from zero.
 
-Aegis is different. It builds a **living model of your digital life**:
+They don't know that Zhang always delays until the last minute. They don't know Project B slipped to May. They don't know you've been ignoring that grant deadline email for three days. They don't know anything — because nothing about you was ever stored anywhere they can reach.
 
-- It knows that 张总 always decides at the last minute and owes you a contract signature
-- It remembers you're 80% done on Project A and that Project B slipped to May
-- It noticed you haven't responded to that grant deadline email from three days ago
-- It can brief you every morning, answer questions about your own life, and act on your behalf — from anywhere, via email or WeChat
+So you repeat yourself. You re-explain context. You manually synthesize information that already exists in your own inbox and chat history. You use AI as a fancy search box instead of as something that actually *knows* you.
 
-This isn't a chatbot you prompt. It's a digital version of you that knows your world.
+**Aegis fixes this at the root.**
+
+It continuously reads your WeChat, your email, your files. It extracts who matters, what's urgent, what you've decided. It builds a structured, versioned, human-readable model of your entire digital life — and keeps it alive, automatically, in the background.
+
+Ask it anything about your own world. Command it from your phone. Wake up to a briefing that already knows what happened yesterday.
+
+This is what AI was supposed to feel like.
 
 ---
 
