@@ -1,0 +1,24 @@
+# Core
+openai>=1.30.0
+apscheduler>=3.10.0
+
+# Web UI
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.0.0
+
+# Database & Search
+chromadb>=0.5.0
+
+# Document parsing
+python-docx>=1.1.0
+pdfplumber>=0.11.0
+openpyxl>=3.1.0
+chardet>=5.2.0
+
+# WeChat integration (Windows only)
+pywxdump>=3.0.0
+wxauto>=3.9.0
+
+# Optional: local embeddings (recommended for offline use)
+# sentence-transformers>=2.7.0

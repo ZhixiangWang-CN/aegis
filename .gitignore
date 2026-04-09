@@ -1,0 +1,41 @@
+# ── Credentials & Keys (NEVER commit) ───────────────────
+.credentials
+*.env
+vendor/wechat-decrypt/all_keys.json
+vendor/wechat-decrypt/config.py
+vendor/wechat-decrypt/config.json
+
+# ── Runtime data (personal) ──────────────────────────────
+data/
+
+# ── Python cache ─────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+
+# ── Virtual environments ─────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── IDE ──────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ── Databases & vector store ─────────────────────────────
+*.db
+*.db-wal
+*.db-shm
+chroma/
+
+# ── Logs ─────────────────────────────────────────────────
+*.log
+
+# ── Temp files ───────────────────────────────────────────
+*.tmp
+*.bak
+_cmd_tmp_*
+wechat_cmd_processed.json
