@@ -1,12 +1,16 @@
+<div align="center">
+
 ```
    ___   ____  ___  ___ ____
   / _ | / __/ / _ \/ _// __/
  / __ |/ _/  / __, / _/_\ \
 /_/ |_/___/ /_/ |_/___/___/
-        your digital twin
 ```
 
-# Aegis — Your Personal Digital Twin
+# Your Personal Digital Twin
+
+### An AI that doesn't just answer questions — it *knows* you.
+### Your people. Your decisions. Your projects. Persistent. Private. Yours.
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -14,14 +18,16 @@
 [![Zero Cloud](https://img.shields.io/badge/Cloud%20Dependency-Zero-critical)](#)
 [![中文文档](https://img.shields.io/badge/文档-中文版-red)](README_CN.md)
 
+</div>
+
 ---
 
-*Every conversation you've had. Every decision you've made. Every person who matters to you.*
-*Scattered across WeChat, email, files — and slowly fading from memory.*
+> **A digital twin is a living model of you** — built from your own data, running on your own machine.
+> Not a chatbot you prompt from scratch every time. An entity that already knows your world.
 
-**Aegis pulls it all together.** It reads your messages, learns your people, tracks your projects, and builds a persistent model of *you* — running entirely on your own machine, owned entirely by you, never touching a cloud.
+Aegis reads your WeChat, your email, your files. It learns who matters to you, tracks every ongoing project, and remembers every decision you've made. It wakes up before you do, processes everything that happened overnight, and delivers a briefing tailored to *your* life — not a generic summary, but one that knows Zhang owes you a contract signature and that Project B slipped to May.
 
-Not a chatbot. Not a search engine. A digital twin.
+All of it runs locally. Nothing leaves your machine except the text summaries you explicitly send to an LLM. Your twin is yours alone.
 
 ---
 
@@ -29,9 +35,9 @@ Not a chatbot. Not a search engine. A digital twin.
 
 They're stateless. Every session starts from zero.
 
-They don't know that Zhang always delays until the last minute. They don't know Project B slipped to May. They don't know you've been ignoring that grant deadline email for three days. They don't know anything — because nothing about you was ever stored anywhere they can reach.
+They don't know that Zhang always delays until the last minute. They don't know Project B slipped to May. They don't know you've been ignoring that grant deadline email for three days. They don't know *anything* — because nothing about you was ever stored anywhere they can reach.
 
-So you repeat yourself. You re-explain context. You manually synthesize information that already exists in your own inbox and chat history. You use AI as a fancy search box instead of as something that actually *knows* you.
+So you repeat yourself. You re-explain context. You manually synthesize information that already exists in your own inbox and chat history. You use AI as a fancy search box instead of as something that actually knows you.
 
 **Aegis fixes this at the root.**
 
