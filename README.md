@@ -24,6 +24,7 @@
 
 > **A digital twin is a living model of you** — built from your own data, running on your own machine.
 > Not a chatbot you prompt from scratch every time. An entity that already knows your world.
+<img width="1200" height="675" alt="image" src="https://github.com/user-attachments/assets/0d77cfce-466f-4e7c-9e4d-8f63e9c98063" />
 
 Aegis reads your WeChat, your email, your files. It learns who matters to you, tracks every ongoing project, and remembers every decision you've made. It wakes up before you do, processes everything that happened overnight, and delivers a briefing tailored to *your* life — not a generic summary, but one that knows Zhang owes you a contract signature and that Project B slipped to May.
 
