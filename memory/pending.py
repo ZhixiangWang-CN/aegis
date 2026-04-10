@@ -68,13 +68,17 @@ def add(source: str, content: str, proposed_layer: str,
 
 def add_focus(text: str, source: str, deadline: str = "",
               project: str = "", db_ref: str = "",
-              priority: str = "normal", confidence: float = 0.6) -> int:
+              priority: str = "normal", confidence: float = 0.6,
+              from_name: str = "") -> int:
     """便捷：添加一条 focus 待审核条目"""
     item_data = {"text": text, "deadline": deadline, "source": source,
-                 "project": project, "db_ref": db_ref, "priority": priority}
+                 "project": project, "db_ref": db_ref, "priority": priority,
+                 "from_name": from_name}
     content = text
     if deadline:
         content += f"（DDL: {deadline}）"
+    if from_name:
+        content += f"（来自: {from_name}）"
     if project:
         content += f" [{project}]"
     return add(source=source, content=content,
@@ -195,6 +199,7 @@ def apply_approved() -> int:
                     project=item_data.get("project", ""),
                     db_ref=item_data.get("db_ref", ""),
                     priority=item_data.get("priority", "normal"),
+                    from_name=item_data.get("from_name", ""),
                 )
                 if item.text:
                     layers.add_focus_item(item)

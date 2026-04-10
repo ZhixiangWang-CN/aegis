@@ -59,13 +59,13 @@ def extract_from_emails(days: int = 7, min_importance: int = 3) -> int:
 
     _safe_print(f"[FocusUpdater] 分析 {len(rows)} 封重要邮件...")
 
-    # 批量给 AI 提取焦点
+    # 构建邮件索引（id → row），方便提取后关联
+    email_map = {str(r["id"]): r for r in rows}
+
     email_texts = []
     for r in rows:
         email_texts.append(
-            f"[★{r['importance']}] 发件人:{r['from_addr']} "
-            f"主题:{r['subject']} "
-            f"摘要:{r['summary'] or '无'}"
+            f'[id:{r["id"]}] 发件人:{r["from_addr"]}  主题:{r["subject"]}  摘要:{r["summary"] or "无"}'
         )
 
     prompt = f"""从以下邮件中提取需要写入焦点清单的行动项。
@@ -77,16 +77,16 @@ def extract_from_emails(days: int = 7, min_importance: int = 3) -> int:
 - 只提取有明确行动要求或截止日期的条目
 - 会议通知、审稿邀请、修改意见、项目进展等均需提取
 - 广告/自动通知/无行动要求的跳过
-- 系统自动发送的日报/简报/报告邮件（发件人与收件人相同，即Aegis自发自收）不提取
+- 系统自动发送的日报/简报/报告邮件不提取
 - priority: urgent（今天/明天）/ normal / waiting
 
 以JSON数组输出，每项格式:
 {{
+  "email_id": "来源邮件的id字段（原样复制）",
   "text": "简洁描述（20字内）",
   "deadline": "YYYY-MM-DD 或 空",
   "priority": "urgent/normal/waiting",
   "project": "关联项目名（如有）",
-  "db_ref": "→ emails:邮件主题前20字",
   "confidence": 0.0-1.0
 }}
 只输出JSON数组，无相关内容则输出 []。"""
@@ -107,14 +107,19 @@ def extract_from_emails(days: int = 7, min_importance: int = 3) -> int:
             text = item.get("text", "").strip()
             if not text:
                 continue
+            email_id = str(item.get("email_id", ""))
+            src_row = email_map.get(email_id)
+            from_name = src_row["from_addr"] if src_row else ""
+            db_ref = f"email:{email_id}" if email_id else ""
             pq.add_focus(
                 text=text,
                 source="email",
                 deadline=item.get("deadline", ""),
                 project=item.get("project", ""),
-                db_ref=item.get("db_ref", ""),
+                db_ref=db_ref,
                 priority=item.get("priority", "normal"),
                 confidence=float(item.get("confidence", 0.6)),
+                from_name=from_name,
             )
             added += 1
 
@@ -196,10 +201,11 @@ def _keyword_scan_private(name: str, msgs: list[dict],
         ) else "normal"
 
         pq.add_focus(
-            text=f"{name}: {content[:60]}",
+            text=content[:60],
             source="wechat",
             priority=priority,
-            db_ref=f"→ wechat:{name}",
+            db_ref=f"wechat:{wxid}",
+            from_name=name,
             confidence=0.55,
         )
         added += 1
@@ -267,7 +273,8 @@ def _full_analyze_private(name: str, msgs: list[dict],
                 source="wechat",
                 deadline=item.get("deadline", ""),
                 project=item.get("project", ""),
-                db_ref=f"→ wechat:{name}",
+                db_ref=f"wechat:{wxid}",
+                from_name=name,
                 priority=item.get("priority", "normal"),
                 confidence=float(item.get("confidence", 0.6)),
             )
@@ -437,7 +444,8 @@ def _analyze_group_triggers(group_name: str,
                 source="wechat_group",
                 deadline=item.get("deadline", ""),
                 project=item.get("project", ""),
-                db_ref=f"→ 群:{group_name}",
+                db_ref=f"wechat:{wxid}",
+                from_name=group_name,
                 priority=item.get("priority", "normal"),
                 confidence=float(item.get("confidence", 0.6)),
             )

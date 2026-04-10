@@ -160,22 +160,26 @@ def update_self(field: str, value: str):
 
 class FocusItem:
     """单条焦点事项"""
-    __slots__ = ("text", "deadline", "source", "project", "db_ref", "priority")
+    __slots__ = ("text", "deadline", "source", "project", "db_ref", "priority", "from_name")
 
     def __init__(self, text: str, deadline: str = "", source: str = "",
-                 project: str = "", db_ref: str = "", priority: str = "normal"):
-        self.text     = text
-        self.deadline = deadline
-        self.source   = source    # "email" / "wechat" / "manual"
-        self.project  = project   # 关联项目名
-        self.db_ref   = db_ref    # → emails:id 或 → wechat:id
-        self.priority = priority  # "urgent" / "normal" / "waiting"
+                 project: str = "", db_ref: str = "", priority: str = "normal",
+                 from_name: str = ""):
+        self.text      = text
+        self.deadline  = deadline
+        self.source    = source      # "email" / "wechat" / "manual"
+        self.project   = project     # 关联项目名
+        self.db_ref    = db_ref      # → emails:id 或 → wechat:id
+        self.priority  = priority    # "urgent" / "normal" / "waiting"
+        self.from_name = from_name   # 发件人/发消息人姓名（用于展示来源）
 
     def to_md(self) -> str:
         icon = {"urgent": "🔴", "normal": "🟡", "waiting": "⏳"}.get(self.priority, "·")
         parts = [f"{icon} {self.text}"]
         if self.deadline:
             parts.append(f"DDL {self.deadline}")
+        if self.from_name:
+            parts.append(f"来自:{self.from_name}")
         if self.db_ref:
             parts.append(f"→ {self.db_ref}")
         if self.project:

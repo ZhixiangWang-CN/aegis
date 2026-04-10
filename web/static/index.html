@@ -501,30 +501,29 @@ function clearChat() {
 // ── 看板 ────────────────────────────────────────────────────────────────────
 
 function parseFocusLine(raw) {
-  // raw: "🔴 任务文字  DDL 2026-05-01  → email:abc  [项目]  📧"
-  // strip leading "- [ ] " or "- [x] "
+  // raw: "🔴 任务文字  DDL 2026-05-01  来自:张三  → email:abc  [项目]  📧"
   const stripped = raw.replace(/^\s*-\s+\[[\sx]\]\s*/, '').trim();
-  // split on double-space segments
   const parts = stripped.split(/\s{2,}/);
   const title_raw = parts[0] || '';
-  // priority icon at start
-  let priority = 'normal';
-  let title = title_raw;
-  if (title_raw.startsWith('🔴')) { priority = 'urgent'; title = title_raw.slice(2).trim(); }
-  else if (title_raw.startsWith('🟡')) { priority = 'normal'; title = title_raw.slice(2).trim(); }
+
+  let priority = 'normal', title = title_raw;
+  if (title_raw.startsWith('🔴')) { priority = 'urgent';  title = title_raw.slice(2).trim(); }
+  else if (title_raw.startsWith('🟡')) { priority = 'normal';  title = title_raw.slice(2).trim(); }
   else if (title_raw.startsWith('⏳')) { priority = 'waiting'; title = title_raw.slice(2).trim(); }
 
-  let deadline = '', project = '', source = '', dbRef = '', channel = '';
+  let deadline = '', project = '', dbRef = '', channel = '', fromName = '';
   for (const p of parts.slice(1)) {
     const pt = p.trim();
-    if (pt.startsWith('DDL ')) deadline = pt.slice(4);
-    else if (pt.startsWith('→ ')) { dbRef = pt.slice(2); source = dbRef.split(':')[0]; }
-    else if (pt.startsWith('[') && pt.endsWith(']')) project = pt.slice(1, -1);
-    else if (pt === '📧') channel = 'email';
-    else if (pt === '💬') channel = 'wechat';
-    else if (pt === '✏️') channel = 'manual';
+    if (pt.startsWith('DDL '))           deadline  = pt.slice(4);
+    else if (pt.startsWith('来自:'))      fromName  = pt.slice(3);
+    else if (pt.startsWith('→ '))        dbRef     = pt.slice(2);
+    else if (/^[a-z]+:\S+/.test(pt))     dbRef     = pt;   // email:123 wechat:xxx
+    else if (pt.startsWith('[') && pt.endsWith(']')) project = pt.slice(1,-1);
+    else if (pt === '📧')                channel   = 'email';
+    else if (pt === '💬')                channel   = 'wechat';
+    else if (pt === '✏️')               channel   = 'manual';
   }
-  return { raw: stripped, title, priority, deadline, project, source, dbRef, channel };
+  return { raw: stripped, title, priority, deadline, project, dbRef, channel, fromName };
 }
 
 async function loadDashboard() {
@@ -559,18 +558,17 @@ async function loadDashboard() {
     const autoContact = '';
 
     const tags = [];
+    if (f.fromName) tags.push(`<span class="focus-tag ${f.channel==='email'?'tag-email':f.channel==='wechat'?'tag-wechat':''}">${f.channel==='email'?'📧':f.channel==='wechat'?'💬':'👤'} ${escHtml(f.fromName)}</span>`);
     if (f.deadline) tags.push(`<span class="focus-tag tag-ddl">⏰ ${f.deadline}</span>`);
-    if (f.project) tags.push(`<span class="focus-tag tag-project">📂 ${f.project}</span>`);
-    if (f.channel === 'email') tags.push(`<span class="focus-tag tag-email">📧 邮件</span>`);
-    if (f.channel === 'wechat') tags.push(`<span class="focus-tag tag-wechat">💬 微信</span>`);
-    if (f.dbRef) tags.push(`<span class="focus-tag" title="${f.dbRef}">🔗 ${f.source||'来源'}</span>`);
+    if (f.project)  tags.push(`<span class="focus-tag tag-project">📂 ${f.project}</span>`);
 
+    const hasSource = !!f.dbRef;
     return `
     <div class="focus-card priority-${f.priority}" id="fc-${i}">
       <div class="focus-card-title">${escHtml(f.title)}</div>
       ${tags.length ? `<div class="focus-card-tags">${tags.join('')}</div>` : ''}
       <div class="focus-card-actions">
-        <button class="fc-btn ai" onclick="toggleFocusExpand('${eid}','${escAttr(f.raw)}')">🤖 AI解读</button>
+        ${hasSource ? `<button class="fc-btn ai" onclick="toggleFocusExpand('${eid}','${escAttr(f.dbRef)}')">📄 原文</button>` : ''}
         <button class="fc-btn reply" onclick="toggleReplyBox('${rid}')">↩ 回复</button>
         <button class="fc-btn done" onclick="focusAction('complete','${escAttr(f.title)}').then(()=>loadDashboard())">✓ 完成</button>
         <button class="fc-btn del" onclick="if(confirm('删除?'))focusAction('delete','${escAttr(f.title)}').then(()=>loadDashboard())">✕</button>
@@ -597,8 +595,7 @@ async function loadDashboard() {
 
       <!-- AI解读展开区 -->
       <div class="focus-expand" id="${eid}">
-        <div class="focus-raw">原始: ${escHtml(f.raw)}</div>
-        <div class="focus-ai-text" id="${eid}-content" style="color:var(--muted);font-style:italic">点击「AI解读」加载分析…</div>
+        <div class="focus-ai-text" id="${eid}-content" style="color:var(--muted);font-style:italic">点击「📄 原文」加载来源内容…</div>
       </div>
     </div>`;
   }).join('') || '<div class="empty-state" style="padding:40px 20px;">暂无待办焦点</div>';
@@ -675,25 +672,27 @@ function statCard(icon, value, label, color) {
   </div>`;
 }
 
-function toggleFocusExpand(eid, rawText) {
+function toggleFocusExpand(eid, dbRef) {
   const box = document.getElementById(eid);
   if (!box) return;
   const isOpen = box.classList.contains('open');
   box.classList.toggle('open');
   if (!isOpen) {
-    // load AI interpretation if not yet loaded
     const content = document.getElementById(eid + '-content');
     if (content && content.dataset.loaded !== '1') {
       content.dataset.loaded = '1';
-      content.textContent = 'AI 分析中…';
-      fetch('/api/focus/interpret', {
+      content.textContent = '加载中…';
+      fetch('/api/focus/source', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({focus_text: rawText})
+        body: JSON.stringify({db_ref: dbRef})
       }).then(r=>r.json()).then(d => {
-        content.style.fontStyle = 'normal';
-        content.style.color = 'var(--text)';
-        content.textContent = d.interpretation || '无法分析';
-      }).catch(() => { content.textContent = '分析失败'; });
+        if (!d.ok) { content.textContent = d.text || '无法加载原文'; return; }
+        const meta = d.source_type === 'email'
+          ? `📧 ${escHtml(d.sender)} <${escHtml(d.sender_addr||'')}> · ${d.date} · 主题: ${escHtml(d.subject||'')}`
+          : `💬 ${escHtml(d.sender)} · ${d.date}`;
+        content.innerHTML = `<div style="font-size:11px;color:var(--muted);margin-bottom:6px">${meta}</div>`
+          + `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${escHtml(d.text)}</div>`;
+      }).catch(() => { content.textContent = '加载失败'; });
     }
   }
 }

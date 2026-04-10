@@ -389,55 +389,80 @@ async def focus_action(body: FocusAction):
     return {"ok": True, "action": body.action, "text": search}
 
 
-class FocusInterpret(BaseModel):
-    focus_text: str  # 焦点事项原始行（含优先级/来源/项目标签）
+class FocusSource(BaseModel):
+    db_ref: str   # 格式：email:123  或  wechat:wxid_xxx
 
 
-@app.post("/api/focus/interpret")
-async def focus_interpret(body: FocusInterpret):
-    """用 AI 解读一条焦点事项，返回上下文分析"""
-    raw = body.focus_text.strip()
-    if not raw:
-        raise HTTPException(400, "内容不能为空")
+@app.post("/api/focus/source")
+async def focus_source(body: FocusSource):
+    """根据 db_ref 查询焦点事项的原始来源内容"""
+    ref = body.db_ref.strip()
+    if not ref:
+        raise HTTPException(400, "db_ref 不能为空")
+
+    import re
+    m = re.match(r'^(email|wechat):(.+)$', ref)
+    if not m:
+        return {"ok": False, "text": "无法解析来源引用"}
+
+    src_type, src_id = m.group(1), m.group(2)
+
     try:
-        from ai import client as ai_client
-        from memory.memory_manage import get_summary as mm_summary
-        import re
+        if src_type == "email":
+            from memory import db as _db
+            with _db.get_conn() as conn:
+                row = conn.execute(
+                    "SELECT subject, from_addr, from_name, date, summary, body FROM emails WHERE id=? LIMIT 1",
+                    (src_id,)
+                ).fetchone()
+            if not row:
+                return {"ok": False, "text": f"未找到邮件 (id={src_id})"}
+            sender = row["from_name"] or row["from_addr"] or "未知"
+            date_str = (row["date"] or "")[:10]
+            body_preview = (row["body"] or row["summary"] or "")[:300]
+            return {
+                "ok": True,
+                "source_type": "email",
+                "sender": sender,
+                "sender_addr": row["from_addr"],
+                "date": date_str,
+                "subject": row["subject"] or "",
+                "text": body_preview,
+            }
 
-        # 从 dbRef 尝试查原始邮件/微信摘要
-        context_extra = ""
-        ref_m = re.search(r'→ (email|wechat):(\S+)', raw)
-        if ref_m:
-            source_type, ref_id = ref_m.group(1), ref_m.group(2)
-            try:
-                if source_type == "email":
-                    with __import__("memory.db", fromlist=["get_conn"]).get_conn() as conn:
-                        row = conn.execute(
-                            "SELECT subject, from_addr, summary FROM emails WHERE id=? LIMIT 1",
-                            (ref_id,)
-                        ).fetchone()
-                        if row:
-                            context_extra = f"\n原始邮件：来自 {row[1]}，主题「{row[0]}」，摘要：{row[2] or '无'}"
-            except Exception:
-                pass
+        elif src_type == "wechat":
+            from memory import db as _db
+            with _db.get_conn() as conn:
+                # src_id 可能是 wxid 或群 wxid
+                rows = conn.execute("""
+                    SELECT talker_name, content, ts
+                    FROM wechat_messages
+                    WHERE talker_wxid = ? AND is_self = 0
+                    ORDER BY create_time DESC LIMIT 5
+                """, (src_id,)).fetchall()
+                if not rows:
+                    rows = conn.execute("""
+                        SELECT talker_name, content, ts
+                        FROM wechat_messages
+                        WHERE talker_wxid LIKE ?
+                        ORDER BY create_time DESC LIMIT 5
+                    """, (f"%{src_id}%",)).fetchall()
+            if not rows:
+                return {"ok": False, "text": f"未找到微信消息 (wxid={src_id})"}
+            sender = rows[0]["talker_name"] or src_id
+            snippets = "\n".join(f"[{r['ts'][:16]}] {r['content'][:100]}" for r in rows)
+            return {
+                "ok": True,
+                "source_type": "wechat",
+                "sender": sender,
+                "date": (rows[0]["ts"] or "")[:10],
+                "text": snippets,
+            }
 
-        prompt = (
-            f"以下是用户的一条焦点事项（包含优先级、截止日期、来源等标签）：\n\n"
-            f"「{raw}」{context_extra}\n\n"
-            f"请用2-4句话解读：\n"
-            f"1. 这件事的核心任务是什么\n"
-            f"2. 为什么重要 / 有什么风险（根据截止日期、来源判断）\n"
-            f"3. 建议的下一步行动\n"
-            f"直接输出分析，不需要标题或序号。"
-        )
-        result = ai_client.chat(
-            messages=[{"role": "user", "content": prompt}],
-            system_prompt="你是Aegis，帮助用户理解和推进焦点事项。简洁、有洞见。",
-            temperature=0.4,
-        )
-        return {"ok": True, "interpretation": result.strip()}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+    return {"ok": False, "text": "未知来源类型"}
 
 
 class FocusReply(BaseModel):
