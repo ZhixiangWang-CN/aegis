@@ -493,18 +493,44 @@ async function loadDashboard() {
   // 焦点事项（从 focus.md 取前10条 - [ ] 条目，带勾选按钮）
   const focusLines = (focus.content||'').split('\n');
   const focusTodos = focusLines.filter(l => /^\s*-\s+\[\s\]/.test(l)).slice(0, 10);
-  const focusItems = focusTodos.map(l => {
+  const focusItems = focusTodos.map((l, i) => {
     const text = l.replace(/^\s*-\s+\[\s\]\s*/, '').trim();
-    return `<div class="focus-item" style="display:flex;align-items:center;justify-content:space-between">
-      <span>${escHtml(text)}</span>
-      <span style="white-space:nowrap;margin-left:8px">
-        <button onclick="focusAction('complete','${escAttr(text)}').then(()=>loadDashboard())"
-          style="background:var(--accent);color:#fff;border:none;border-radius:4px;
-                 padding:2px 7px;cursor:pointer;font-size:11px;margin-right:3px">✓</button>
-        <button onclick="if(confirm('删除?'))focusAction('delete','${escAttr(text)}').then(()=>loadDashboard())"
-          style="background:#c0392b;color:#fff;border:none;border-radius:4px;
-                 padding:2px 7px;cursor:pointer;font-size:11px">✕</button>
-      </span>
+    const rid = `focus-reply-${i}`;
+    return `<div class="focus-item">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="flex:1;min-width:0;word-break:break-word">${escHtml(text)}</span>
+        <span style="white-space:nowrap;margin-left:8px;flex-shrink:0">
+          <button onclick="toggleReplyBox('${rid}')"
+            style="background:#2d6a9f;color:#fff;border:none;border-radius:4px;
+                   padding:2px 7px;cursor:pointer;font-size:11px;margin-right:3px">↩ 回复</button>
+          <button onclick="focusAction('complete','${escAttr(text)}').then(()=>loadDashboard())"
+            style="background:var(--accent);color:#fff;border:none;border-radius:4px;
+                   padding:2px 7px;cursor:pointer;font-size:11px;margin-right:3px">✓</button>
+          <button onclick="if(confirm('删除?'))focusAction('delete','${escAttr(text)}').then(()=>loadDashboard())"
+            style="background:#c0392b;color:#fff;border:none;border-radius:4px;
+                   padding:2px 7px;cursor:pointer;font-size:11px">✕</button>
+        </span>
+      </div>
+      <div id="${rid}" style="display:none;margin-top:6px;display:none">
+        <div style="display:flex;gap:6px;align-items:center">
+          <select id="${rid}-ch"
+            style="background:var(--bg);border:1px solid var(--border);color:var(--text);
+                   border-radius:4px;padding:4px 6px;font-size:12px;cursor:pointer">
+            <option value="auto">自动</option>
+            <option value="email">邮件</option>
+            <option value="wechat">微信</option>
+          </select>
+          <input id="${rid}-msg" type="text" placeholder="核心内容，AI 自动扩写成完整回复…"
+            style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);
+                   border-radius:4px;padding:5px 8px;font-size:12px;outline:none"
+            onkeydown="if(event.key==='Enter')sendFocusReply('${escAttr(text)}','${rid}')"
+          />
+          <button onclick="sendFocusReply('${escAttr(text)}','${rid}')"
+            style="background:#2d6a9f;color:#fff;border:none;border-radius:4px;
+                   padding:5px 10px;cursor:pointer;font-size:12px;white-space:nowrap">发送</button>
+        </div>
+        <div id="${rid}-status" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px"></div>
+      </div>
     </div>`;
   }).join('') || '<div class="empty-state" style="padding:20px;">暂无焦点事项</div>';
 
@@ -776,6 +802,41 @@ async function focusAction(action, text) {
     loadMemoryFile('focus.md');
   } catch(e) {
     alert('请求失败: ' + e.message);
+  }
+}
+
+function toggleReplyBox(rid) {
+  const box = document.getElementById(rid);
+  if (!box) return;
+  const visible = box.style.display !== 'none';
+  box.style.display = visible ? 'none' : 'block';
+  if (!visible) setTimeout(() => document.getElementById(rid + '-msg')?.focus(), 50);
+}
+
+async function sendFocusReply(text, rid) {
+  const channel = document.getElementById(rid + '-ch')?.value || 'auto';
+  const msg = document.getElementById(rid + '-msg')?.value?.trim();
+  const status = document.getElementById(rid + '-status');
+  if (!msg) { if (status) status.textContent = '请输入回复内容'; return; }
+
+  const btn = document.querySelector(`#${rid} button[onclick*="sendFocusReply"]`);
+  if (btn) { btn.disabled = true; btn.textContent = '发送中…'; }
+  if (status) status.textContent = 'AI 扩写并发送中…';
+
+  try {
+    const r = await fetch('/api/focus/reply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ focus_text: text, channel, core_message: msg })
+    });
+    const data = await r.json();
+    if (status) status.textContent = data.result || (r.ok ? '✅ 已发送' : '❌ 失败');
+    if (r.ok && data.result?.includes('✅')) {
+      setTimeout(() => loadDashboard(), 1500);
+    }
+  } catch (e) {
+    if (status) status.textContent = '❌ 请求失败: ' + e.message;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '发送'; }
   }
 }
 
