@@ -377,6 +377,7 @@ def _daily_backup():
 
 def check_wechat_commands():
     """每2分钟: 微信指令 DB 轮询备用通道（wxauto 实时监听的补充）"""
+    import config
     if not config.MODULES.get("wechat"):
         return
     try:

@@ -501,7 +501,7 @@ function clearChat() {
 // ── 看板 ────────────────────────────────────────────────────────────────────
 
 function parseFocusLine(raw) {
-  // raw: "🔴 任务文字  DDL 2026-05-01  来自:张三  → email:abc  [项目]  📧"
+  // Handles both new format (double-space segments) and legacy inline format
   const stripped = raw.replace(/^\s*-\s+\[[\sx]\]\s*/, '').trim();
   const parts = stripped.split(/\s{2,}/);
   const title_raw = parts[0] || '';
@@ -512,17 +512,38 @@ function parseFocusLine(raw) {
   else if (title_raw.startsWith('⏳')) { priority = 'waiting'; title = title_raw.slice(2).trim(); }
 
   let deadline = '', project = '', dbRef = '', channel = '', fromName = '';
+
+  // Parse double-space segments
   for (const p of parts.slice(1)) {
     const pt = p.trim();
-    if (pt.startsWith('DDL '))           deadline  = pt.slice(4);
-    else if (pt.startsWith('来自:'))      fromName  = pt.slice(3);
-    else if (pt.startsWith('→ '))        dbRef     = pt.slice(2);
-    else if (/^[a-z]+:\S+/.test(pt))     dbRef     = pt;   // email:123 wechat:xxx
-    else if (pt.startsWith('[') && pt.endsWith(']')) project = pt.slice(1,-1);
-    else if (pt === '📧')                channel   = 'email';
-    else if (pt === '💬')                channel   = 'wechat';
-    else if (pt === '✏️')               channel   = 'manual';
+    if (pt.startsWith('DDL '))                         deadline  = pt.slice(4);
+    else if (pt.startsWith('来自:'))                    fromName  = pt.slice(3);
+    else if (pt.startsWith('→ '))                      dbRef     = pt.slice(2);
+    else if (/^(email|wechat):\S+/.test(pt))           dbRef     = pt;
+    else if (pt.startsWith('[') && pt.endsWith(']'))   project   = pt.slice(1,-1);
+    else if (pt === '📧')                              channel   = 'email';
+    else if (pt === '💬')                              channel   = 'wechat';
+    else if (pt === '✏️')                             channel   = 'manual';
   }
+
+  // Fallback: extract [项目] from the title if not found in segments
+  if (!project) {
+    const pm = title.match(/\[([^\]]+)\]\s*$/);
+    if (pm) { project = pm[1]; title = title.slice(0, title.lastIndexOf('[')).trim(); }
+  }
+  // Fallback: extract (截止:YYYY-MM-DD) from title
+  if (!deadline) {
+    const dm = title.match(/[（(]截止[:：](\d{4}-\d{2}-\d{2})[）)]/);
+    if (dm) { deadline = dm[1]; title = title.replace(dm[0], '').trim(); }
+  }
+  // Fallback: channel from emoji at end
+  if (!channel) {
+    if (title.endsWith('📧') || stripped.endsWith('📧')) channel = 'email';
+    else if (title.endsWith('💬') || stripped.endsWith('💬')) channel = 'wechat';
+  }
+  // Clean trailing emojis from title
+  title = title.replace(/\s*[📧💬✏️]\s*$/, '').trim();
+
   return { raw: stripped, title, priority, deadline, project, dbRef, channel, fromName };
 }
 
