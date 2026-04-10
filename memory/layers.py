@@ -257,12 +257,49 @@ def add_focus_item(item: FocusItem):
         content += f"\n## 已确认\n{item.to_md()}\n"
     _write(FOCUS_PATH, content)
 
+    # 桌面通知：紧急焦点事项
+    if getattr(item, "priority", "normal") == "urgent":
+        try:
+            from notifier import notify_focus
+            notify_focus(item.text)
+        except Exception:
+            pass
+
+
+def complete_focus_item(keyword: str):
+    """标记焦点事项为完成 [x]（记录正向隐式信号）"""
+    content = get_focus()
+    new_lines = []
+    for line in content.splitlines():
+        if keyword.lower() in line.lower() and line.strip().startswith("- [ ]"):
+            line = line.replace("- [ ]", "- [x]", 1)
+            # 隐式信号：焦点完成 → 正向
+            try:
+                from memory.importance_learner import record_signal
+                record_signal("focus_completed", content_hint=keyword[:80])
+            except Exception:
+                pass
+        new_lines.append(line)
+    _write(FOCUS_PATH, "\n".join(new_lines))
+
 
 def clear_focus_item(keyword: str):
-    """从 focus.md 删除包含关键词的条目（任务完成时调用）"""
+    """从 focus.md 删除包含关键词的条目"""
     content = get_focus()
-    lines = [l for l in content.splitlines()
-             if keyword.lower() not in l.lower() or not l.startswith("- ")]
+    removed = []
+    lines = []
+    for l in content.splitlines():
+        if keyword.lower() in l.lower() and l.startswith("- "):
+            removed.append(l)
+        else:
+            lines.append(l)
+    if removed:
+        # 隐式信号：焦点被删除 → 负向（可能是噪音）
+        try:
+            from memory.importance_learner import record_signal
+            record_signal("focus_deleted", content_hint=keyword[:80])
+        except Exception:
+            pass
     _write(FOCUS_PATH, "\n".join(lines))
 
 

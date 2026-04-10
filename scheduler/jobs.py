@@ -223,6 +223,28 @@ def _run_focus_update():
         print(f"[Job] focus_update 失败: {e}")
 
 
+def _daily_reconcile():
+    """每天 21:00: 通知质量对账 — 汇总隐式信号 + 生成报告发给用户"""
+    try:
+        from memory.importance_learner import daily_reconcile
+        from email_module.sender import send_email
+        import config
+
+        report = daily_reconcile()
+        if not report:
+            print("[Job] daily_reconcile: 今天没有推送通知，跳过")
+            return
+
+        send_email(
+            to=config.NETEASE_EMAIL,
+            subject="📊 Aegis 今日通知质量报告",
+            body=report,
+        )
+        print(f"[Job] daily_reconcile: 报告已发送（{len(report)} 字）")
+    except Exception as e:
+        print(f"[Job] daily_reconcile 失败: {e}")
+
+
 def _weekly_report():
     """每周日 09:00: 发送每周状态报告"""
     from memory import db as main_db
@@ -429,12 +451,16 @@ def start_scheduler(background: bool = False):
     # 每月1日 04:00 个人背景记忆月度更新
     scheduler.add_job(_monthly_memory_update, "cron", day=1, hour=4, minute=0, id="monthly_memory_update")
 
+    # 每天 21:00 通知质量对账（隐式+显式信号汇总，更新重要性权重）
+    scheduler.add_job(_daily_reconcile, "cron", hour=21, minute=0, id="daily_reconcile")
+
     print("[Scheduler] 已注册任务:")
     print("  - check_emails:          每30分钟（邮件指令检测）")
     print("  - wechat_commands:       每2分钟（微信指令 DB 轮询备用）")
     print("  - daily_briefing:        每天 08:00")
     print("  - rss_fetch:             每天 07:00")
     print("  - focus_update:          每天 19:00（邮件+微信焦点提取）")
+    print("  - daily_reconcile:       每天 21:00（通知质量对账 + 权重更新）")
     print("  - profile_update:        每天 03:00（文件索引 + pending 自动写入 + 备份）")
     print("  - weekly_report:         每周日 09:00（状态报告）")
     print("  - aging_check:           每周日 03:00（老化清理）")

@@ -96,11 +96,10 @@ def process_new_emails(emails: list[dict]) -> list[dict]:
                 important.append({**em, **result})
                 _safe_print(f"[Summarizer] 重要邮件(★{importance}): {em['subject']}")
 
-                # importance >= 4: 推送摘要到 pending 队列（等待用户审核后写入 focus.md）
+                # importance >= 4: 推送摘要到 pending 队列 + 桌面通知
                 if importance >= 4 and summary:
                     try:
                         from memory.pending import add_focus
-                        # 尝试从 AI result 中提取截止日期和项目
                         deadline = result.get("deadline", "")
                         project  = result.get("project", "")
                         add_focus(
@@ -109,6 +108,16 @@ def process_new_emails(emails: list[dict]) -> list[dict]:
                             deadline=deadline,
                             project=project,
                             confidence=min(importance / 5.0 * 0.8, 0.9),
+                        )
+                    except Exception:
+                        pass
+                    # 桌面通知：重要邮件到达
+                    try:
+                        from notifier import notify_email
+                        notify_email(
+                            subject=em["subject"],
+                            sender=em["from_addr"],
+                            score=importance,
                         )
                     except Exception:
                         pass

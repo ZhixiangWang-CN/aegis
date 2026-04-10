@@ -6,7 +6,7 @@
   备用模式：Scheduler 每2分钟调用一次，双保险
 
 当前监听目标（测试阶段）:
-  WATCH_CONTACTS = [{"wxid": "wxid_xxx", "name": "联系人备注名"}]
+  WATCH_CONTACTS = [{"wxid": "...", "name": "向日葵"}]
   后续扩展为 all_contacts 模式
 
 用法（联系人在微信发）:
@@ -35,7 +35,7 @@ from memory import db as main_db
 COMMAND_PREFIXES = ("aegis:", "jv:", "jarvis:")
 
 # 当前监听的联系人列表（wxid + 备注名）
-# 在 Web UI 设置页 → 微信 → 监控联系人 中填写，或直接在 data/settings.json 编辑
+# 测试阶段只监听向日葵，后续可扩展
 WATCH_CONTACTS: list[dict] = []
 
 # 用于主动发消息时的 pyautogui 方案（Ctrl+F 搜索联系人）
@@ -371,7 +371,6 @@ def _handle_message(msg: dict, contact_name: str, processed: set):
     _save_processed(processed)
 
     if not _is_command(content):
-        # 不是指令 — 不处理（后续可扩展为普通对话 AI 回复）
         print(f"[WxCmd] 收到消息（{contact_name}）: {content[:60]}")
         return
 
@@ -386,6 +385,12 @@ def _handle_message(msg: dict, contact_name: str, processed: set):
         result = _execute(instruction)
         _reply(result, contact_name)
         print(f"[WxCmd] 已回复 ({len(result)} 字)")
+        # 桌面通知：指令执行完毕
+        try:
+            from notifier import notify_wechat_command
+            notify_wechat_command(contact_name, instruction, result)
+        except Exception:
+            pass
     except Exception as e:
         _reply(f"❌ 执行失败: {e}", contact_name)
 
@@ -405,9 +410,9 @@ def send_wechat_to_filehelper(msg: str) -> bool:
 def start_realtime_listener() -> threading.Thread | None:
     """
     启动实时监听线程：
-    - 监控微信 message_*.db 文件 mtime，有变化立即解密处理
-    - 只处理 WATCH_CONTACTS 中的联系人
-    - 检测到 Aegis: 前缀指令，执行并微信回复
+    - 优先用 watchdog 文件系统事件监听（变更延迟 < 1 秒）
+    - watchdog 不可用时降级为 2 秒 mtime 轮询
+    - 检测到 Aegis: 前缀指令，执行并微信回复 + 桌面通知
     """
     global _listener_thread, _listener_running
 
@@ -423,42 +428,83 @@ def start_realtime_listener() -> threading.Thread | None:
             _listener_running = False
             return
 
-        # 初始化 mtime 快照 & 处理时间戳
-        last_mtimes = _get_db_mtimes(all_keys, db_dir)
-        # 从 2 分钟前开始，避免处理历史旧消息
+        # 共享状态
         last_ts: dict[str, float] = {
             c["wxid"]: (datetime.now() - timedelta(minutes=2)).timestamp()
             for c in WATCH_CONTACTS
         }
         processed = _load_processed()
+        changed_flag = threading.Event()
 
-        watch_names = {c["wxid"]: c["name"] for c in WATCH_CONTACTS}
-        print(f"[WxCmd] ✅ 实时监听已启动 — 监控联系人: {[c['name'] for c in WATCH_CONTACTS]}")
+        def _process_changes():
+            """检测到 DB 变化后扫描新消息"""
+            for contact in WATCH_CONTACTS:
+                wxid = contact["wxid"]
+                name = contact["name"]
+                since = last_ts.get(wxid, 0)
+                try:
+                    new_msgs = _read_contact_messages(wxid, since_ts=since)
+                    if new_msgs:
+                        last_ts[wxid] = max(m["create_time"] for m in new_msgs)
+                        for msg in new_msgs:
+                            _handle_message(msg, name, processed)
+                except Exception as e:
+                    print(f"[WxCmd] 消息处理异常({name}): {e}")
+
+        # ── 尝试启动 watchdog 文件系统监听 ────────────────────────────────────
+        observer = None
+        try:
+            from watchdog.observers import Observer
+            from watchdog.events import FileSystemEventHandler
+
+            msg_dir = db_dir / "message"
+            if not msg_dir.exists():
+                # 尝试在 db_dir 本身监听
+                msg_dir = db_dir
+
+            class _DBHandler(FileSystemEventHandler):
+                def on_modified(self, event):
+                    if not event.is_directory and "message_" in event.src_path:
+                        changed_flag.set()
+
+                def on_created(self, event):
+                    if not event.is_directory and "message_" in event.src_path:
+                        changed_flag.set()
+
+            observer = Observer()
+            observer.schedule(_DBHandler(), str(msg_dir), recursive=True)
+            observer.start()
+            print(f"[WxCmd] ✅ watchdog 文件监听已启动 — 目录: {msg_dir}")
+            use_watchdog = True
+        except Exception as e:
+            print(f"[WxCmd] watchdog 启动失败，降级为轮询: {e}")
+            use_watchdog = False
+
+        last_mtimes = _get_db_mtimes(all_keys, db_dir)
+        print(f"[WxCmd] ✅ 实时监听已启动 — 联系人: {[c['name'] for c in WATCH_CONTACTS]}"
+              f" | 模式: {'watchdog' if use_watchdog else '轮询2s'}")
 
         while _listener_running:
             try:
-                cur_mtimes = _get_db_mtimes(all_keys, db_dir)
-                changed = any(cur_mtimes.get(k) != last_mtimes.get(k) for k in cur_mtimes)
-
-                if changed:
-                    last_mtimes = cur_mtimes
-                    for contact in WATCH_CONTACTS:
-                        wxid = contact["wxid"]
-                        name = contact["name"]
-                        since = last_ts.get(wxid, 0)
-
-                        new_msgs = _read_contact_messages(wxid, since_ts=since)
-                        if new_msgs:
-                            # 更新时间戳到最新消息
-                            last_ts[wxid] = max(m["create_time"] for m in new_msgs)
-                            for msg in new_msgs:
-                                _handle_message(msg, name, processed)
-
+                if use_watchdog:
+                    # watchdog 模式：等待文件变化事件（最多 1 秒超时保底）
+                    if changed_flag.wait(timeout=1.0):
+                        changed_flag.clear()
+                        _process_changes()
+                else:
+                    # 降级模式：2 秒 mtime 轮询
+                    time.sleep(2)
+                    cur_mtimes = _get_db_mtimes(all_keys, db_dir)
+                    if any(cur_mtimes.get(k) != last_mtimes.get(k) for k in cur_mtimes):
+                        last_mtimes = cur_mtimes
+                        _process_changes()
             except Exception as e:
                 print(f"[WxCmd] 监听循环异常: {e}")
+                time.sleep(2)
 
-            time.sleep(5)
-
+        if observer:
+            observer.stop()
+            observer.join()
         _listener_running = False
         print("[WxCmd] 实时监听已停止")
 

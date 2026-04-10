@@ -59,6 +59,8 @@ This is what AI was supposed to feel like.
 | **Your priorities** | A live focus list (≤15 items) of what actually needs your attention | AI-extracted from all sources, deduped, auto-aged |
 | **Your knowledge** | Full-text + semantic search across everything you've ever touched | FTS5 + ChromaDB, indexed locally |
 | **Your voice** | Drafts emails, writes documents, sends briefings — in your context | Command channel via email or WeChat |
+| **Your attention** | Real-time desktop notifications for important messages | Windows toast, < 1s latency via filesystem watcher |
+| **Your preferences** | Learns what matters to you over time | Daily reconciliation + implicit behavioral signals |
 
 ---
 
@@ -99,6 +101,17 @@ This is what AI was supposed to feel like.
 │  L4  FTS5+vectors  Your complete knowledge base. <100ms.    │
 │                                                              │
 │  Plain Markdown · git-versioned · rollbackable · yours      │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│                  INTELLIGENCE LAYER (learns you)             │
+│                                                              │
+│  importance_learner.py                                       │
+│  Contact score × keyword weight × time pattern → priority   │
+│  Implicit: focus completed/deleted → signal                  │
+│  Daily 21:00 reconciliation: "were today's alerts useful?"   │
+│  Bayesian weight update → system gets smarter every day      │
 └────────────────────────┬─────────────────────────────────────┘
                          │
                          ▼
@@ -230,10 +243,47 @@ git -C data/memory revert <hash>
 | Daily 07:00 | Fetch academic RSS feeds |
 | Daily 08:00 | **Daily briefing** — fuse all sources, rule-score, AI only if needed |
 | Daily 19:00 | Focus updater — extract action items from the day |
+| Daily 21:00 | **Notification reconciliation** — summarize today's alerts, collect feedback, update importance weights |
 | Daily 03:00 | File index update + DB backup + auto-approve pending |
 | Sunday 03:00 | Memory aging — archive expired focus, stale pending |
 
 > All intervals are configurable in the Web UI settings panel.
+
+---
+
+## Self-Learning: Getting Smarter Every Day
+
+Most notification systems send the same alerts forever, regardless of whether you care. Aegis learns.
+
+**The scoring pipeline** — every incoming message is scored before any AI call:
+```
+score = contact_useful_rate × keyword_boost × time_pattern × consecutive_msgs
+```
+
+**Two signal types collected automatically:**
+
+| Signal | When | Weight |
+|---|---|---|
+| Focus item completed ✅ | You mark a task done | Strong positive |
+| Focus item deleted ❌ | You remove it immediately | Strong negative |
+| Quick reply detected 📱 | You reply within 30 min | Positive |
+| No action in 24h ⏳ | Alert ignored entirely | Weak negative |
+| Explicit feedback ✍️ | You reply `Aegis: 对账 有用 1,3 噪音 2` | Strongest signal |
+
+**Daily reconciliation at 21:00** — Aegis sends you a report:
+```
+📊 Today's notification quality — April 10
+Sent 8 alerts: ✅ Useful 5  ❓ Unclear 3  🔇 Noise 0
+
+Unclear — did these matter?
+  1. [14:32] Zhang San: "please confirm the contract by..."
+  2. [16:45] Work group: "weekly report template attached"
+  3. [20:10] Li Si: "are you free tomorrow morning?"
+
+Reply: Aegis: 对账 有用 1,3  噪音 2
+```
+
+Weights are updated using a Bayesian rolling average — early feedback has high impact, later feedback is more conservative. Stored in `data/learned_importance.json`, fully inspectable and editable.
 
 ---
 

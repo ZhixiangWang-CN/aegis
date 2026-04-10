@@ -166,6 +166,15 @@ def _execute_command(instruction: str, context: dict) -> str:
     """
     用 AI 解析并执行指令，返回结果文本。
     """
+    # ── 对账指令快速路由（不走 AI）──────────────────────────────────────────
+    instr_lower = instruction.strip().lower()
+    if instr_lower.startswith("对账"):
+        try:
+            from memory.importance_learner import handle_reconcile_reply
+            return handle_reconcile_reply(instruction.strip())
+        except Exception as e:
+            return f"对账处理失败: {e}"
+
     from memory import profile
     from memory.memory_manage import get_summary as mm_summary, add_fact
 

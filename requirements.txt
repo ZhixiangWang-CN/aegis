@@ -19,6 +19,10 @@ chardet>=5.2.0
 # WeChat integration (Windows only)
 pywxdump>=3.0.0
 wxauto>=3.9.0
+watchdog>=2.1.0
+
+# Desktop notifications (Windows only)
+winotify>=1.1.0
 
 # Optional: local embeddings (recommended for offline use)
 # sentence-transformers>=2.7.0
