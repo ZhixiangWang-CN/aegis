@@ -389,6 +389,57 @@ async def focus_action(body: FocusAction):
     return {"ok": True, "action": body.action, "text": search}
 
 
+class FocusInterpret(BaseModel):
+    focus_text: str  # 焦点事项原始行（含优先级/来源/项目标签）
+
+
+@app.post("/api/focus/interpret")
+async def focus_interpret(body: FocusInterpret):
+    """用 AI 解读一条焦点事项，返回上下文分析"""
+    raw = body.focus_text.strip()
+    if not raw:
+        raise HTTPException(400, "内容不能为空")
+    try:
+        from ai import client as ai_client
+        from memory.memory_manage import get_summary as mm_summary
+        import re
+
+        # 从 dbRef 尝试查原始邮件/微信摘要
+        context_extra = ""
+        ref_m = re.search(r'→ (email|wechat):(\S+)', raw)
+        if ref_m:
+            source_type, ref_id = ref_m.group(1), ref_m.group(2)
+            try:
+                if source_type == "email":
+                    with __import__("memory.db", fromlist=["get_conn"]).get_conn() as conn:
+                        row = conn.execute(
+                            "SELECT subject, from_addr, summary FROM emails WHERE id=? LIMIT 1",
+                            (ref_id,)
+                        ).fetchone()
+                        if row:
+                            context_extra = f"\n原始邮件：来自 {row[1]}，主题「{row[0]}」，摘要：{row[2] or '无'}"
+            except Exception:
+                pass
+
+        prompt = (
+            f"以下是用户的一条焦点事项（包含优先级、截止日期、来源等标签）：\n\n"
+            f"「{raw}」{context_extra}\n\n"
+            f"请用2-4句话解读：\n"
+            f"1. 这件事的核心任务是什么\n"
+            f"2. 为什么重要 / 有什么风险（根据截止日期、来源判断）\n"
+            f"3. 建议的下一步行动\n"
+            f"直接输出分析，不需要标题或序号。"
+        )
+        result = ai_client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="你是Aegis，帮助用户理解和推进焦点事项。简洁、有洞见。",
+            temperature=0.4,
+        )
+        return {"ok": True, "interpretation": result.strip()}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
 class FocusReply(BaseModel):
     focus_text: str           # 焦点事项原文（用于上下文）
     contact: str              # 收件人姓名/备注（用户明确填写）
