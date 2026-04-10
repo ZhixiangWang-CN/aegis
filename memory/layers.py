@@ -181,7 +181,9 @@ class FocusItem:
         if self.from_name:
             parts.append(f"来自:{self.from_name}")
         if self.db_ref:
-            parts.append(f"→ {self.db_ref}")
+            # 去掉旧格式中可能已带的 "→ " 前缀，避免双箭头
+            clean_ref = re.sub(r'^→\s*', '', self.db_ref).strip()
+            parts.append(f"→ {clean_ref}")
         if self.project:
             parts.append(f"[{self.project}]")
         src_tag = {"email": "📧", "wechat": "💬", "manual": "✏️"}.get(self.source, "")

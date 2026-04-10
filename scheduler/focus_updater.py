@@ -179,13 +179,13 @@ def _process_private_chat(wxid: str, role: str, depth: str, cutoff: str) -> int:
     msgs = [dict(r) for r in rows]
 
     if depth == "keyword":
-        return _keyword_scan_private(name, msgs, role)
+        return _keyword_scan_private(name, msgs, role, wxid)
     else:  # full
         return _full_analyze_private(name, msgs, role, wxid)
 
 
 def _keyword_scan_private(name: str, msgs: list[dict],
-                          role: str) -> int:
+                          role: str, wxid: str = "") -> int:
     """关键词扫描模式：只关注含触发词的消息"""
     added = 0
     for msg in msgs:
