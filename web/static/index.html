@@ -511,25 +511,29 @@ async function loadDashboard() {
                    padding:2px 7px;cursor:pointer;font-size:11px">✕</button>
         </span>
       </div>
-      <div id="${rid}" style="display:none;margin-top:6px;display:none">
-        <div style="display:flex;gap:6px;align-items:center">
+      <div id="${rid}" style="display:none;margin-top:6px">
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
           <select id="${rid}-ch"
             style="background:var(--bg);border:1px solid var(--border);color:var(--text);
-                   border-radius:4px;padding:4px 6px;font-size:12px;cursor:pointer">
-            <option value="auto">自动</option>
-            <option value="email">邮件</option>
+                   border-radius:4px;padding:4px 6px;font-size:12px;cursor:pointer;flex-shrink:0">
             <option value="wechat">微信</option>
+            <option value="email">邮件</option>
+            <option value="auto">自动</option>
           </select>
-          <input id="${rid}-msg" type="text" placeholder="核心内容，AI 自动扩写成完整回复…"
+          <input id="${rid}-to" type="text" placeholder="收件人（姓名/备注）"
+            style="width:110px;flex-shrink:0;background:var(--bg);border:1px solid var(--border);
+                   color:var(--text);border-radius:4px;padding:5px 8px;font-size:12px;outline:none"
+          />
+          <input id="${rid}-msg" type="text" placeholder="核心内容，AI 自动扩写…"
             style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);
                    border-radius:4px;padding:5px 8px;font-size:12px;outline:none"
             onkeydown="if(event.key==='Enter')sendFocusReply('${escAttr(text)}','${rid}')"
           />
           <button onclick="sendFocusReply('${escAttr(text)}','${rid}')"
             style="background:#2d6a9f;color:#fff;border:none;border-radius:4px;
-                   padding:5px 10px;cursor:pointer;font-size:12px;white-space:nowrap">发送</button>
+                   padding:5px 10px;cursor:pointer;font-size:12px;white-space:nowrap;flex-shrink:0">发送</button>
         </div>
-        <div id="${rid}-status" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px"></div>
+        <div id="${rid}-status" style="font-size:11px;color:var(--muted);min-height:14px"></div>
       </div>
     </div>`;
   }).join('') || '<div class="empty-state" style="padding:20px;">暂无焦点事项</div>';
@@ -814,9 +818,11 @@ function toggleReplyBox(rid) {
 }
 
 async function sendFocusReply(text, rid) {
-  const channel = document.getElementById(rid + '-ch')?.value || 'auto';
+  const channel = document.getElementById(rid + '-ch')?.value || 'wechat';
+  const contact = document.getElementById(rid + '-to')?.value?.trim();
   const msg = document.getElementById(rid + '-msg')?.value?.trim();
   const status = document.getElementById(rid + '-status');
+  if (!contact) { if (status) status.textContent = '请填写收件人'; document.getElementById(rid+'-to')?.focus(); return; }
   if (!msg) { if (status) status.textContent = '请输入回复内容'; return; }
 
   const btn = document.querySelector(`#${rid} button[onclick*="sendFocusReply"]`);
@@ -826,7 +832,7 @@ async function sendFocusReply(text, rid) {
   try {
     const r = await fetch('/api/focus/reply', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ focus_text: text, channel, core_message: msg })
+      body: JSON.stringify({ focus_text: text, contact, channel, core_message: msg })
     });
     const data = await r.json();
     if (status) status.textContent = data.result || (r.ok ? '✅ 已发送' : '❌ 失败');

@@ -390,9 +390,10 @@ async def focus_action(body: FocusAction):
 
 
 class FocusReply(BaseModel):
-    focus_text: str     # 焦点事项原文（用于定位联系人和来源）
-    channel: str = "auto"   # "auto" | "email" | "wechat"
-    core_message: str   # 核心回复内容，AI 会扩写成完整消息
+    focus_text: str           # 焦点事项原文（用于上下文）
+    contact: str              # 收件人姓名/备注（用户明确填写）
+    channel: str = "wechat"  # "wechat" | "email" | "auto"
+    core_message: str         # 核心回复内容，AI 会扩写成完整消息
 
 
 @app.post("/api/focus/reply")
@@ -400,23 +401,16 @@ async def focus_reply(body: FocusReply):
     """通过焦点事项直接回复邮件或微信"""
     if not body.core_message.strip():
         raise HTTPException(400, "回复内容不能为空")
+    if not body.contact.strip():
+        raise HTTPException(400, "收件人不能为空")
     try:
-        from email_module.command_handler import (
-            _parse_reply_instruction, _handle_reply_instruction
+        from email_module.command_handler import _handle_reply_instruction
+        result = _handle_reply_instruction(
+            channel=body.channel,
+            contact_hint=body.contact.strip(),
+            core_message=body.core_message.strip(),
+            context={"focus_text": body.focus_text},
         )
-        # 构造等价指令：{channel}回复 {focus_text前15字} {core_message}
-        ch_prefix = {"email": "邮件回复", "wechat": "微信回复"}.get(body.channel, "回复")
-        hint = body.focus_text[:20].split("  ")[0].strip()  # 取第一段作联系人提示
-        instruction = f"{ch_prefix} {hint} {body.core_message}"
-        match = _parse_reply_instruction(instruction)
-        if not match:
-            # 退化：直接用 focus_text 作联系人提示
-            match = {
-                "channel": body.channel if body.channel != "auto" else "auto",
-                "contact_hint": hint,
-                "core_message": body.core_message,
-            }
-        result = _handle_reply_instruction(**match, context={})
         return {"ok": True, "result": result}
     except Exception as e:
         raise HTTPException(500, str(e))
