@@ -58,16 +58,46 @@ IMPORTANCE = {
 }
 
 
-def classify_by_metadata(sender: str, subject: str) -> dict:
-    # Aegis自发邮件（日报/提醒），直接跳过
-    import config
+# Aegis 系统自发邮件的主题前缀，收到后直接跳过（避免自我触发通知）
+_AEGIS_SUBJECT_PREFIXES = (
+    "📋 aegis日报",
+    "📊 aegis",
+    "✅ aegis",
+    "⚠️ aegis",
+    "⚠️ 重要邮件提醒",
+    "[aegis]",
+    "📄 aegis文档",
+    "📎 aegis发送文件",
+    "aegis系统测试",
+)
+
+
+def _is_aegis_self_email(sender: str, subject: str) -> bool:
+    """判断是否是 Aegis 系统自己发出的邮件（日报、提醒、回复等）"""
+    subject_lower = subject.lower().strip()
+    # ① 主要检查：发件人是自己的邮箱（覆盖所有 Aegis 发出的邮件）
     if sender in (config.NETEASE_EMAIL, config.GMAIL_EMAIL or ""):
-        return {"category": "self", "importance": 0,
-                "need_ai": False, "reason": "self_sent"}
+        return True
+    # ② 备用检查：主题前缀匹配（防转发场景）
+    if any(subject_lower.startswith(p) for p in _AEGIS_SUBJECT_PREFIXES):
+        return True
+    # ③ 兜底：主题含 "aegis" 且含已知系统词
+    _system_words = ("日报", "简报", "状态报告", "通知质量", "系统测试", "文档:", "发送文件")
+    if "aegis" in subject_lower and any(w in subject for w in _system_words):
+        return True
+    return False
+
+
+def classify_by_metadata(sender: str, subject: str) -> dict:
     """
     第一层: 纯规则分类，不调AI，毫秒级。
     返回: {category, importance, need_ai, reason}
     """
+    # Aegis 自发邮件直接跳过，importance=0 不触发任何后续处理
+    if _is_aegis_self_email(sender, subject):
+        return {"category": "self", "importance": 0,
+                "need_ai": False, "reason": "aegis_self_sent"}
+
     sender_lower = sender.lower()
     subject_lower = subject.lower()
 

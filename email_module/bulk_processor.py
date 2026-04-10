@@ -122,6 +122,12 @@ def process_bulk_emails(months_back: int = 12):
         importance = result["importance"]
         category   = result["category"]
 
+        # Aegis 自发邮件（日报/提醒/回复）完全跳过，不写库不通知
+        if category == "self":
+            em["_mark_read"] = True
+            stats["skip"] += 1
+            continue
+
         update_sender_profile(em["from_addr"], category, importance)
         upsert_contact(em["from_addr"], em["from_addr"].split("@")[0], em["subject"])
 
@@ -349,6 +355,12 @@ def process_bulk_gmail_emails(months_back: int = 12):
         importance = result["importance"]
         category   = result["category"]
 
+        # Aegis 自发邮件（日报/提醒/回复）完全跳过，不写库不通知
+        if category == "self":
+            em["_mark_read"] = True
+            stats["skip"] += 1
+            continue
+
         update_sender_profile(em["from_addr"], category, importance)
         upsert_contact(em["from_addr"], em["from_addr"].split("@")[0], em["subject"])
 
@@ -465,6 +477,10 @@ def _fetch_and_process_bodies(email_metas: list[dict]):
             body = _extract_body(msg)
             pending.append({"id": uid, "from_addr": from_addr,
                              "subject": subject, "date": date_str, "body": body})
+
+            # 提取并归档附件（importance >= 4 的邮件在 process_new_emails 后触发通知，
+            # 附件在此处先行保存，归类由 attachment_manager 自动完成）
+            _save_email_attachments(msg, from_addr, subject)
         finally:
             mail2.logout()
 
@@ -478,3 +494,36 @@ def _fetch_and_process_bodies(email_metas: list[dict]):
         process_new_emails(pending)
 
     _safe_print(f"[Bulk] 精读完成")
+
+
+def _save_email_attachments(msg, from_addr: str, subject: str):
+    """从 email.Message 对象中提取并归档所有附件"""
+    SKIP_TYPES = {"text/plain", "text/html"}
+    try:
+        from scanner.attachment_manager import save_attachment
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            if content_type in SKIP_TYPES:
+                continue
+            filename = part.get_filename()
+            if not filename:
+                continue
+            from email_module.reader import _decode_header_value
+            filename = _decode_header_value(filename)
+            payload = part.get_payload(decode=True)
+            if not payload:
+                continue
+            try:
+                save_attachment(
+                    content=payload,
+                    filename=filename,
+                    sender=from_addr,
+                    subject=subject,
+                    source="email",
+                )
+            except Exception as e:
+                _safe_print(f"[Attach] 附件保存失败 {filename}: {e}")
+    except ImportError:
+        pass
+    except Exception as e:
+        _safe_print(f"[Attach] 附件提取失败: {e}")

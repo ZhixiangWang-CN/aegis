@@ -36,7 +36,9 @@ COMMAND_PREFIXES = ("aegis:", "jv:", "jarvis:")
 
 # 当前监听的联系人列表（wxid + 备注名）
 # 测试阶段只监听向日葵，后续可扩展
-WATCH_CONTACTS: list[dict] = []
+WATCH_CONTACTS: list[dict] = [
+    {"wxid": "wxid_xr6veadv5z2v21", "name": "向日葵"},
+]
 
 # 用于主动发消息时的 pyautogui 方案（Ctrl+F 搜索联系人）
 LISTEN_CONTACT = config.get("AEGIS_DISPLAY_NAME", "") or "文件传输助手"

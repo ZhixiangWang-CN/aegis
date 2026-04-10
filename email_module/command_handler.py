@@ -166,14 +166,36 @@ def _execute_command(instruction: str, context: dict) -> str:
     """
     用 AI 解析并执行指令，返回结果文本。
     """
-    # ── 对账指令快速路由（不走 AI）──────────────────────────────────────────
     instr_lower = instruction.strip().lower()
+
+    # ── 对账指令快速路由 ────────────────────────────────────────────────────
     if instr_lower.startswith("对账"):
         try:
             from memory.importance_learner import handle_reconcile_reply
             return handle_reconcile_reply(instruction.strip())
         except Exception as e:
             return f"对账处理失败: {e}"
+
+    # ── 附件搜索/发送 ───────────────────────────────────────────────────────
+    if instr_lower.startswith(("附件列表", "查看附件")):
+        try:
+            from scanner.attachment_manager import get_attachment_summary
+            return get_attachment_summary()
+        except Exception as e:
+            return f"附件库查询失败: {e}"
+
+    # 发送附件给联系人：发送 [关键词] 给 [联系人]
+    _send_attach = _parse_send_attachment(instruction.strip())
+    if _send_attach:
+        return _handle_send_attachment(**_send_attach)
+
+    # ── 焦点回复指令（快速路由，无需 AI 解析意图）──────────────────────────
+    # 格式：回复 [关键词] [核心内容]
+    #       邮件回复 [联系人] [核心内容]
+    #       微信回复 [联系人] [核心内容]
+    _reply_match = _parse_reply_instruction(instruction.strip())
+    if _reply_match:
+        return _handle_reply_instruction(**_reply_match, context=context)
 
     from memory import profile
     from memory.memory_manage import get_summary as mm_summary, add_fact
@@ -379,6 +401,219 @@ def _execute_command(instruction: str, context: dict) -> str:
             pass
 
     return result_text or "✅ 指令已执行"
+
+
+def _parse_reply_instruction(instruction: str) -> dict | None:
+    """
+    解析快速回复指令，返回 {channel, contact_hint, core_message} 或 None。
+
+    支持格式：
+      回复 [联系人] [内容]          → channel=auto（优先邮件，其次微信）
+      邮件回复 [联系人] [内容]       → channel=email
+      微信回复 [联系人] [内容]       → channel=wechat
+    """
+    import re
+    # 模式：可选前缀 + 联系人（不含空格，最多10字）+ 空格 + 正文（>=2字）
+    patterns = [
+        (r"^(邮件回复|邮件 回复)\s+(\S{1,20})\s+(.{2,})", "email"),
+        (r"^(微信回复|微信 回复)\s+(\S{1,20})\s+(.{2,})", "wechat"),
+        (r"^回复\s+(\S{1,20})\s+(.{2,})", "auto"),
+    ]
+    for pattern, channel in patterns:
+        m = re.match(pattern, instruction.strip(), re.DOTALL)
+        if m:
+            if channel == "auto":
+                return {
+                    "channel": "auto",
+                    "contact_hint": m.group(1).strip(),
+                    "core_message": m.group(2).strip(),
+                }
+            else:
+                return {
+                    "channel": channel,
+                    "contact_hint": m.group(2).strip(),
+                    "core_message": m.group(3).strip(),
+                }
+    return None
+
+
+def _draft_reply(contact_name: str, core_message: str, channel: str,
+                 original_subject: str = "") -> str:
+    """用 AI 将核心要点扩写成完整回复"""
+    channel_hint = "邮件" if channel == "email" else "微信消息" if channel == "wechat" else "消息"
+    subject_hint = f"邮件主题: {original_subject}\n" if original_subject else ""
+    prompt = (
+        f"用户要给 {contact_name} 回复一条{channel_hint}。\n"
+        f"{subject_hint}"
+        f"核心要点：{core_message}\n\n"
+        f"请代用户起草一条完整、自然、专业的{channel_hint}正文。"
+        f"直接输出正文内容，不要加说明或引导语。"
+        f"{'篇幅控制在3-5句话，适合即时消息。' if channel == 'wechat' else '格式参照正式邮件正文。'}"
+    )
+    try:
+        draft = ai.chat(
+            messages=[{"role": "user", "content": prompt}],
+            system_prompt="你是Aegis，简洁专业，代替用户撰写回复。",
+            temperature=0.4,
+        )
+        return draft.strip()
+    except Exception:
+        return core_message  # 退化：直接发核心内容
+
+
+def _find_focus_source(contact_hint: str) -> dict:
+    """
+    从 focus.md 条目中，找含 contact_hint 的条目，
+    提取 source（email/wechat）、db_ref、subject 等信息。
+    返回 {"source": ..., "db_ref": ..., "subject": ..., "found": bool}
+    """
+    from memory.layers import get_focus
+    content = get_focus()
+    hint_lower = contact_hint.lower()
+    for line in content.splitlines():
+        if hint_lower in line.lower() and line.startswith("- "):
+            source = "email" if "📧" in line else "wechat" if "💬" in line else "unknown"
+            # 提取 → db_ref
+            import re
+            ref_m = re.search(r"→ (\S+)", line)
+            db_ref = ref_m.group(1) if ref_m else ""
+            return {"source": source, "db_ref": db_ref, "found": True, "line": line}
+    return {"source": "unknown", "db_ref": "", "found": False, "line": ""}
+
+
+def _lookup_contact_wxid(name: str) -> str:
+    """按姓名备注搜索微信 wxid"""
+    try:
+        from memory import db as _db
+        with _db.get_conn() as conn:
+            row = conn.execute("""
+                SELECT wxid FROM wechat_contacts
+                WHERE remark LIKE ? OR nickname LIKE ?
+                LIMIT 1
+            """, (f"%{name}%", f"%{name}%")).fetchone()
+            return row[0] if row else ""
+    except Exception:
+        return ""
+
+
+def _handle_reply_instruction(
+    channel: str, contact_hint: str, core_message: str, context: dict
+) -> str:
+    """
+    执行快速回复指令：
+    1. 在 focus.md 中查找联系人关联的来源和原邮件/消息信息
+    2. 从联系人库查找邮件地址或微信 wxid
+    3. AI 扩写核心内容为完整回复
+    4. 发送
+    5. 标记焦点事项为已完成
+    """
+    # ① 从 focus.md 确定来源渠道（辅助 auto 模式）
+    focus_info = _find_focus_source(contact_hint)
+    detected_source = focus_info["source"]  # "email" / "wechat" / "unknown"
+
+    if channel == "auto":
+        channel = detected_source if detected_source in ("email", "wechat") else "email"
+
+    # ② 查找原邮件主题（用于生成回复主题）
+    original_subject = ""
+    if channel == "email" and focus_info.get("db_ref"):
+        try:
+            with __import__("memory.db", fromlist=["get_conn"]).get_conn() as conn:
+                row = conn.execute(
+                    "SELECT subject FROM emails WHERE id=? LIMIT 1",
+                    (focus_info["db_ref"].replace("email:", ""),)
+                ).fetchone()
+                if row:
+                    original_subject = row[0]
+        except Exception:
+            pass
+
+    # ③ AI 扩写回复
+    draft = _draft_reply(contact_hint, core_message, channel, original_subject)
+
+    # ④ 发送
+    if channel == "email":
+        to_addr = _lookup_contact_email(contact_hint)
+        if not to_addr:
+            return (
+                f"⚠️ 未找到 '{contact_hint}' 的邮件地址，草稿如下：\n\n{draft}\n\n"
+                f"请用 Aegis: 邮件回复 [完整姓名] [内容] 重试，或直接发送。"
+            )
+        reply_subject = f"Re: {original_subject}" if original_subject else f"回复: {contact_hint}"
+        ok = send_email(to_addr, reply_subject, draft)
+        result = (
+            f"✅ 邮件已发送给 {contact_hint} <{to_addr}>\n主题: {reply_subject}\n\n{draft}"
+            if ok else f"❌ 邮件发送失败（{to_addr}），草稿：\n\n{draft}"
+        )
+
+    elif channel == "wechat":
+        try:
+            from scheduler.wechat_commander import send_wechat_msg
+            ok = send_wechat_msg(contact_hint, draft)
+            result = (
+                f"✅ 微信消息已发送给 {contact_hint}：\n\n{draft}"
+                if ok else f"❌ 微信发送失败，草稿：\n\n{draft}"
+            )
+        except Exception as e:
+            result = f"❌ 微信发送异常: {e}\n\n草稿：{draft}"
+    else:
+        result = f"⚠️ 无法确定发送渠道，草稿：\n\n{draft}"
+
+    # ⑤ 标记焦点事项为完成
+    if "✅" in result or "已发送" in result:
+        try:
+            from memory.layers import complete_focus_item
+            complete_focus_item(contact_hint)
+        except Exception:
+            pass
+
+    return result
+
+
+def _parse_send_attachment(instruction: str) -> dict | None:
+    """
+    解析附件发送指令。
+    格式：发送 [文件关键词] 给 [联系人]
+          发送附件 [关键词] 给 [联系人]
+    """
+    import re
+    m = re.match(r"^发送附件?\s+(.+?)\s+给\s+(\S{1,20})", instruction.strip())
+    if m:
+        return {"file_keyword": m.group(1).strip(), "contact_hint": m.group(2).strip()}
+    return None
+
+
+def _handle_send_attachment(file_keyword: str, contact_hint: str) -> str:
+    """搜索归档附件并发送给指定联系人（邮件）"""
+    from scanner.attachment_manager import find_attachments
+    matches = find_attachments(file_keyword, limit=3)
+    if not matches:
+        return f"⚠️ 未找到含「{file_keyword}」的附件，请先确认文件已归档。"
+
+    best = matches[0]
+    from pathlib import Path as _Path
+    file_path = _Path(best["path"])
+    if not file_path.exists():
+        return f"⚠️ 附件文件已移动或删除: {best['filename']}"
+
+    to_addr = _lookup_contact_email(contact_hint)
+    if not to_addr:
+        return (
+            f"⚠️ 未找到 '{contact_hint}' 的邮件地址。\n"
+            f"找到附件: {best['filename']} ({best['folder']})\n"
+            f"请指定完整姓名或邮件地址重试。"
+        )
+
+    subject = f"📎 Aegis发送文件: {file_path.name}"
+    ok = send_email(
+        to_addr, subject,
+        f"Aegis 代发附件\n文件名: {file_path.name}\n来源: {best.get('source','—')}",
+        attachments=[str(file_path)],
+    )
+    return (
+        f"✅ 附件已发送给 {contact_hint} <{to_addr}>\n文件: {file_path.name}"
+        if ok else f"❌ 发送失败，文件: {file_path.name}"
+    )
 
 
 def _search_knowledge(query: str) -> str:
