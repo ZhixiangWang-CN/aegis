@@ -34,15 +34,18 @@ from memory import db as main_db
 
 COMMAND_PREFIXES = ("aegis:", "jv:", "jarvis:")
 
-# 当前监听的联系人列表（wxid + 备注名）
-# 测试阶段只监听向日葵，后续可扩展
-WATCH_CONTACTS: list[dict] = [
-    {"wxid": "wxid_xr6veadv5z2v21", "name": "向日葵"},
-]
+# 全量监听模式：空列表 = 监听所有联系人
+# 如需限制指令权限，在 config.py 中设置 AEGIS_COMMAND_WXIDS（逗号分隔的 wxid）
+WATCH_CONTACTS: list[dict] = []
 
 # 用于主动发消息时的 pyautogui 方案（Ctrl+F 搜索联系人）
 LISTEN_CONTACT = config.get("AEGIS_DISPLAY_NAME", "") or "文件传输助手"
 AEGIS_WXID = config.AEGIS_WXID or ""
+
+# 允许下达 Aegis: 指令的 wxid 白名单（空 = 不限制）
+_COMMAND_WHITELIST: set[str] = set(
+    w.strip() for w in (config.get("AEGIS_COMMAND_WXIDS", "") or "").split(",") if w.strip()
+)
 
 _PROCESSED_FILE = config.DATA_DIR / "wechat_cmd_processed.json"
 
@@ -215,6 +218,137 @@ def _read_contact_messages(wxid: str, since_ts: float = 0) -> list[dict]:
     return results
 
 
+def _load_contact_names() -> dict[str, str]:
+    """从主库 wechat_contacts 表读取 {wxid: display_name}"""
+    try:
+        with main_db.get_conn() as conn:
+            rows = conn.execute(
+                "SELECT wxid, remark, nickname FROM wechat_contacts"
+            ).fetchall()
+            result = {}
+            for r in rows:
+                wxid = r[0] or ""
+                name = r[1] or r[2] or wxid  # 优先备注名，其次昵称
+                if wxid:
+                    result[wxid] = name
+            return result
+    except Exception:
+        return {}
+
+
+def _read_all_new_messages(since_ts: float) -> list[dict]:
+    """
+    扫描全量微信消息：遍历所有 message_*.db 中的 Name2Id 表，
+    读取每个联系人自 since_ts 以来收到的新消息（非本人发送）。
+    """
+    all_keys, db_dir = _get_keys_and_dbdir()
+    if not all_keys:
+        return []
+
+    msg_keys = {k: v for k, v in all_keys.items()
+                if k.startswith("message\\message_") and not k.endswith("fts.db")}
+
+    results: list[dict] = []
+    seen_uids: set[str] = set()
+
+    for rel, key_info in msg_keys.items():
+        src = db_dir / rel.replace("/", os.sep).replace("\\", os.sep)
+        if not src.exists():
+            continue
+        enc_key = bytes.fromhex(key_info.get("enc_key") or key_info["key"])
+        tmp = _decrypt_db_to_tmp(src, enc_key)
+        if not tmp:
+            continue
+        conn = None
+        try:
+            conn = sqlite3.connect(str(tmp))
+            conn.row_factory = sqlite3.Row
+
+            # 读取 Name2Id 获取所有联系人 wxid
+            try:
+                n2i_rows = conn.execute(
+                    "SELECT user_name, rowid FROM Name2Id"
+                ).fetchall()
+            except Exception:
+                continue
+
+            for n2i in n2i_rows:
+                talker_wxid = n2i["user_name"] or ""
+                if not talker_wxid:
+                    continue
+                sender_rowid = n2i["rowid"]
+                table_name = f"Msg_{hashlib.md5(talker_wxid.encode()).hexdigest()}"
+                is_group = "@chatroom" in talker_wxid
+
+                try:
+                    rows = conn.execute(f"""
+                        SELECT local_id, create_time, real_sender_id,
+                               message_content, WCDB_CT_message_content
+                        FROM [{table_name}]
+                        WHERE local_type = 1
+                          AND create_time > ?
+                    """, (int(since_ts),)).fetchall()
+                except Exception:
+                    continue
+
+                for r in rows:
+                    content_raw = r["message_content"]
+                    ct = r["WCDB_CT_message_content"]
+                    if ct == 4 and isinstance(content_raw, bytes):
+                        try:
+                            import zstandard as zstd
+                            content = zstd.ZstdDecompressor().decompress(content_raw).decode("utf-8", "replace")
+                        except Exception:
+                            content = ""
+                    elif isinstance(content_raw, bytes):
+                        content = content_raw.decode("utf-8", "replace")
+                    else:
+                        content = content_raw or ""
+
+                    content = content.strip()
+                    if not content:
+                        continue
+
+                    # 判断是否本人发送（本人消息跳过）
+                    if is_group:
+                        if ":\n" not in content:
+                            continue  # 群消息无前缀 = 本人发送，跳过
+                        sender_prefix, content = content.split(":\n", 1)
+                        content = content.strip()
+                        actual_sender_wxid = sender_prefix.strip()
+                    else:
+                        # 私聊：real_sender_id 为空/0 = 本人发送，跳过
+                        if not r["real_sender_id"]:
+                            continue
+                        actual_sender_wxid = talker_wxid
+
+                    uid = hashlib.md5(
+                        f"{rel}_{r['local_id']}_{talker_wxid}".encode()
+                    ).hexdigest()
+                    if uid in seen_uids:
+                        continue
+                    seen_uids.add(uid)
+
+                    results.append({
+                        "uid": uid,
+                        "wxid": actual_sender_wxid,
+                        "talker_wxid": talker_wxid,  # 会话 wxid（群聊时与 sender 不同）
+                        "content": content,
+                        "create_time": r["create_time"],
+                        "ts": datetime.fromtimestamp(r["create_time"]).isoformat(),
+                        "is_group": is_group,
+                    })
+
+        except Exception:
+            pass
+        finally:
+            if conn:
+                conn.close()
+
+    results.sort(key=lambda x: x["create_time"])
+    return results
+
+
 def _get_db_mtimes(all_keys: dict, db_dir: Path) -> dict[str, float]:
     """获取所有 message_*.db 的当前 mtime"""
     mtimes = {}
@@ -366,35 +500,63 @@ def _reply(msg: str, contact_name: str = None):
 def _handle_message(msg: dict, contact_name: str, processed: set):
     uid = msg["uid"]
     content = msg["content"]
+    wxid = msg.get("wxid", "")
+    is_group = msg.get("is_group", False)
     if uid in processed:
         return
 
     processed.add(uid)
     _save_processed(processed)
 
-    if not _is_command(content):
-        print(f"[WxCmd] 收到消息（{contact_name}）: {content[:60]}")
-        return
+    # ── 指令处理 ──────────────────────────────────────────────────────────────
+    if _is_command(content):
+        # 白名单检查（空白名单 = 不限制）
+        if _COMMAND_WHITELIST and wxid and wxid not in _COMMAND_WHITELIST:
+            print(f"[WxCmd] 拒绝指令（非授权联系人 {contact_name}）: {content[:40]}")
+            return
 
-    instruction = _extract_instruction(content)
-    print(f"[WxCmd] 执行指令（{contact_name}）: {instruction[:80]}")
+        instruction = _extract_instruction(content)
+        print(f"[WxCmd] 执行指令（{contact_name}）: {instruction[:80]}")
 
-    if not _is_safe(instruction):
-        _reply("⚠️ 指令被安全策略拒绝", contact_name)
-        return
+        if not _is_safe(instruction):
+            _reply("⚠️ 指令被安全策略拒绝", contact_name)
+            return
 
-    try:
-        result = _execute(instruction)
-        _reply(result, contact_name)
-        print(f"[WxCmd] 已回复 ({len(result)} 字)")
-        # 桌面通知：指令执行完毕
         try:
-            from notifier import notify_wechat_command
-            notify_wechat_command(contact_name, instruction, result)
-        except Exception:
-            pass
-    except Exception as e:
-        _reply(f"❌ 执行失败: {e}", contact_name)
+            result = _execute(instruction)
+            _reply(result, contact_name)
+            print(f"[WxCmd] 已回复 ({len(result)} 字)")
+            try:
+                from notifier import notify_wechat_command
+                notify_wechat_command(contact_name, instruction, result)
+            except Exception:
+                pass
+        except Exception as e:
+            _reply(f"❌ 执行失败: {e}", contact_name)
+        return
+
+    # ── 非指令：重要性评分 + 桌面通知 ────────────────────────────────────────
+    try:
+        from memory.importance_learner import score_message
+        hour = datetime.fromtimestamp(msg.get("create_time", 0)).hour
+        score = score_message(
+            wxid=wxid,
+            content=content,
+            is_group=is_group,
+            hour=hour,
+        )
+        if score >= 0.6:
+            print(f"[WxCmd] 重要消息（{contact_name} score={score:.2f}）: {content[:60]}")
+            try:
+                from notifier import notify_wechat_important
+                notify_wechat_important(contact_name, content, score)
+            except Exception:
+                pass
+        elif score >= 0.3:
+            print(f"[WxCmd] 普通消息（{contact_name} score={score:.2f}）: {content[:40]}")
+    except Exception:
+        # 无法评分时也记录
+        print(f"[WxCmd] 收到消息（{contact_name}）: {content[:60]}")
 
 
 # ── 公开发送接口 ──────────────────────────────────────────────────────────────
@@ -431,25 +593,27 @@ def start_realtime_listener() -> threading.Thread | None:
             return
 
         # 共享状态
-        last_ts: dict[str, float] = {
-            c["wxid"]: (datetime.now() - timedelta(minutes=2)).timestamp()
-            for c in WATCH_CONTACTS
-        }
+        _global_since = [(datetime.now() - timedelta(minutes=2)).timestamp()]
         processed = _load_processed()
         changed_flag = threading.Event()
+        contact_names = _load_contact_names()  # {wxid: name}
 
         def _process_changes():
-            """检测到 DB 变化后扫描新消息"""
-            for contact in WATCH_CONTACTS:
-                wxid = contact["wxid"]
-                name = contact["name"]
-                since = last_ts.get(wxid, 0)
+            """检测到 DB 变化后扫描全量新消息"""
+            since = _global_since[0]
+            try:
+                new_msgs = _read_all_new_messages(since_ts=since)
+            except Exception as e:
+                print(f"[WxCmd] 全量扫描异常: {e}")
+                return
+            if not new_msgs:
+                return
+            _global_since[0] = max(m["create_time"] for m in new_msgs)
+            for msg in new_msgs:
+                wxid = msg["wxid"]
+                name = contact_names.get(wxid) or contact_names.get(msg["talker_wxid"]) or wxid
                 try:
-                    new_msgs = _read_contact_messages(wxid, since_ts=since)
-                    if new_msgs:
-                        last_ts[wxid] = max(m["create_time"] for m in new_msgs)
-                        for msg in new_msgs:
-                            _handle_message(msg, name, processed)
+                    _handle_message(msg, name, processed)
                 except Exception as e:
                     print(f"[WxCmd] 消息处理异常({name}): {e}")
 
@@ -483,8 +647,9 @@ def start_realtime_listener() -> threading.Thread | None:
             use_watchdog = False
 
         last_mtimes = _get_db_mtimes(all_keys, db_dir)
-        print(f"[WxCmd] ✅ 实时监听已启动 — 联系人: {[c['name'] for c in WATCH_CONTACTS]}"
-              f" | 模式: {'watchdog' if use_watchdog else '轮询2s'}")
+        print(f"[WxCmd] ✅ 实时监听已启动 — 模式: 全量联系人"
+              f" | {'watchdog' if use_watchdog else '轮询2s'}"
+              f"{' | 指令白名单: ' + str(len(_COMMAND_WHITELIST)) + '人' if _COMMAND_WHITELIST else ' | 指令白名单: 无限制'}")
 
         while _listener_running:
             try:
@@ -524,62 +689,67 @@ def stop_realtime_listener():
 def listener_status() -> dict:
     return {
         "running": _listener_running and _listener_thread is not None and _listener_thread.is_alive(),
-        "watch_contacts": [c["name"] for c in WATCH_CONTACTS],
+        "mode": "全量联系人",
+        "command_whitelist_size": len(_COMMAND_WHITELIST),
     }
 
 
 # ── DB 轮询备用入口（每2分钟由 scheduler 调用）────────────────────────────────
 
 def _sync_new_wechat_messages():
-    """同步主要 WATCH_CONTACTS 的新消息到 wechat_messages 表"""
-    all_keys, db_dir = _get_keys_and_dbdir()
-    if not all_keys:
-        return
-
+    """同步全量新消息到 wechat_messages 表"""
     now_str = datetime.now().isoformat()
     since_ts = (datetime.now() - timedelta(minutes=5)).timestamp()
+    contact_names = _load_contact_names()
 
-    for contact in WATCH_CONTACTS:
-        wxid = contact["wxid"]
-        name = contact["name"]
-        new_msgs = _read_contact_messages(wxid, since_ts=since_ts)
+    try:
+        new_msgs = _read_all_new_messages(since_ts=since_ts)
+    except Exception as e:
+        print(f"[WxCmd] 全量同步失败: {e}")
+        return
 
-        if not new_msgs:
-            continue
+    if not new_msgs:
+        return
 
-        with main_db.get_conn() as conn:
-            for m in new_msgs:
-                try:
-                    cur = conn.execute("""
-                        INSERT OR IGNORE INTO wechat_messages
-                        (msg_id, chat_id, talker_wxid, talker_name, content,
-                         msg_type, is_sender, is_self, create_time, ts, indexed_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?)
-                    """, (m["uid"], wxid, wxid, name,
-                          m["content"][:2000], 1, 0, 0, m["ts"], m["ts"], now_str))
-                except Exception:
-                    pass
+    saved = 0
+    with main_db.get_conn() as conn:
+        for m in new_msgs:
+            wxid = m["wxid"]
+            talker = m["talker_wxid"]
+            name = contact_names.get(wxid) or contact_names.get(talker) or wxid
+            try:
+                conn.execute("""
+                    INSERT OR IGNORE INTO wechat_messages
+                    (msg_id, chat_id, talker_wxid, talker_name, content,
+                     msg_type, is_sender, is_self, create_time, ts, indexed_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                """, (m["uid"], talker, wxid, name,
+                      m["content"][:2000], 1, 0, 0, m["ts"], m["ts"], now_str))
+                saved += 1
+            except Exception:
+                pass
 
-        print(f"[WxCmd] 同步 {len(new_msgs)} 条新消息（{name}）")
+    if saved:
+        print(f"[WxCmd] 同步 {saved} 条新消息（全量联系人）")
 
 
 def process_wechat_commands():
-    """备用轮询：同步消息 + 处理指令"""
+    """备用轮询：全量同步 + 处理指令"""
     _sync_new_wechat_messages()
 
     processed = _load_processed()
-    since = (datetime.now() - timedelta(minutes=5)).isoformat()
+    since_ts = (datetime.now() - timedelta(minutes=5)).timestamp()
+    contact_names = _load_contact_names()
 
-    for contact in WATCH_CONTACTS:
-        wxid = contact["wxid"]
-        name = contact["name"]
-        since_ts = (datetime.now() - timedelta(minutes=5)).timestamp()
+    try:
+        new_msgs = _read_all_new_messages(since_ts=since_ts)
+    except Exception:
+        return
 
-        new_msgs = _read_contact_messages(wxid, since_ts=since_ts)
-        cmd_msgs = [m for m in new_msgs
-                    if m["uid"] not in processed and _is_command(m["content"])]
-        for m in cmd_msgs:
-            _handle_message(m, name, processed)
+    for m in new_msgs:
+        wxid = m["wxid"]
+        name = contact_names.get(wxid) or contact_names.get(m["talker_wxid"]) or wxid
+        _handle_message(m, name, processed)
 
 
 # ── 兼容旧调用名 ──────────────────────────────────────────────────────────────
